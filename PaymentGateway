@@ -1,0 +1,237 @@
+import java.sql.*;
+import java.util.*;
+
+class PaymentGateway {
+    private Connection connect() throws SQLException {
+        try {
+            Class.forName("com.mysql.cj.jdbc.Driver");  
+        } catch (ClassNotFoundException e) {
+            throw new SQLException("MySQL JDBC Driver not found!", e);
+        }
+        return DriverManager.getConnection("jdbc:mysql://localhost:3306/payment?useSSL=false&serverTimezone=UTC", "root", ""); 
+    }
+
+    public boolean execute(String query, Object... params) {
+        try (Connection conn = connect(); PreparedStatement stmt = conn.prepareStatement(query)) {
+            for (int i = 0; i < params.length; i++) {
+                stmt.setObject(i + 1, params[i]);
+            }
+            int rowsAffected = stmt.executeUpdate();
+            return rowsAffected > 0;  
+        } catch (SQLException e) {
+            System.out.println(" Error: " + e.getMessage());
+            return false; 
+        }
+    }
+
+    public boolean checkUserExists(String username) {
+        try (Connection conn = connect(); 
+             PreparedStatement stmt = conn.prepareStatement("SELECT username FROM users WHERE username = ?")) {
+            stmt.setString(1, username);
+            ResultSet rs = stmt.executeQuery();
+            return rs.next(); 
+        } catch (SQLException e) {
+            System.out.println("Error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public void registerUser() {
+        Scanner s = new Scanner(System.in);
+        System.out.print("Username: ");
+        String u = s.next();
+        System.out.print("Password: ");
+        String p = s.next();
+        
+        if (u.isBlank() || p.isBlank()) {
+            System.out.println(" Invalid input! Username and password cannot be empty.");
+            return;
+        }
+        if (checkUserExists(u)) {
+            System.out.println(" Registration Failed! Username already exists.");
+            return;
+        }
+        
+        boolean success = execute("INSERT INTO users (username, password) VALUES (?, ?)", u, p);
+        if (success) {
+            System.out.println(" Registration Successful! Welcome, " + u);
+        } else {
+            System.out.println(" Registration Failed! Please try again.");
+        }
+    }
+
+    public void addPaymentMethod() {
+        Scanner s = new Scanner(System.in);
+        System.out.print("Username: ");
+        String u = s.next();
+    
+        if (!checkUserExists(u)) {
+            System.out.println(" User not found! Register first.");
+            return;
+        }
+    
+        System.out.print("Card Number: ");
+        String c = s.next();
+        
+        if (c.length() < 12 || c.length() > 19 || !c.matches("\\d+")) {
+            System.out.println(" Invalid card number! Must be 12-19 digits.");
+            return;
+        }
+    
+        boolean success = execute("INSERT INTO payment_methods (username, card_number) VALUES (?, ?)", u, c);
+        
+        if (success) {
+            System.out.println(" Payment Method Added Successfully!");
+        } else {
+            System.out.println(" Failed to Add Payment Method! Check database connection or constraints.");
+        }
+    }
+    
+    public void processPayment() {
+        Scanner s = new Scanner(System.in);
+        System.out.print("Username: ");
+        String u = s.next();
+        if (!checkUserExists(u)) {
+            System.out.println(" User not found! Register first.");
+            return;
+        }
+
+        System.out.print("Product: ");
+        s.nextLine(); 
+        String p = s.nextLine();
+        if (p.isBlank()) {
+            System.out.println(" Invalid product name!");
+            return;
+        }
+
+        System.out.print("Amount: ");
+        if (!s.hasNextDouble()) {
+            System.out.println(" Invalid amount! Enter a valid number.");
+            s.next(); 
+            return;
+        }
+        double a = s.nextDouble();
+
+        String status = new Random().nextBoolean() ? "Success" : "Failed";
+        
+        boolean success = execute("INSERT INTO transactions (username, product, amount, status) VALUES (?, ?, ?, ?)", u, p, a, status);
+        
+        if (success && status.equals("Success")) {
+            System.out.println(" Transaction Successful! You purchased " + p + " for $" + a);
+        } else {
+            System.out.println(" Payment Failed! Try again later.");
+        }
+    }
+
+    public void deleteRecord() {
+        Scanner s = new Scanner(System.in);
+        System.out.println("\nDelete Options:");
+        System.out.println("1. Delete User");
+        System.out.println("2. Delete Payment Method");
+        System.out.println("3. Delete Transaction");
+        System.out.print("Choose an option: ");
+
+        if (!s.hasNextInt()) {
+            System.out.println(" Invalid input! Enter a number between 1-3.");
+            s.next();
+            return;
+        }
+
+        int choice = s.nextInt();
+        switch (choice) {
+            case 1 -> deleteUser();
+            case 2 -> deletePaymentMethod();
+            case 3 -> deleteTransaction();
+            default -> System.out.println(" Invalid option! Choose between 1-3.");
+        }
+    }
+
+    private void deleteUser() {
+        Scanner s = new Scanner(System.in);
+        System.out.print("Enter username to delete: ");
+        String username = s.next();
+        
+        if (!checkUserExists(username)) {
+            System.out.println("User not found!");
+            return;
+        }
+
+        execute("DELETE FROM transactions WHERE username = ?", username);
+        execute("DELETE FROM payment_methods WHERE username = ?", username);
+        boolean success = execute("DELETE FROM users WHERE username = ?", username);
+
+        if (success) {
+            System.out.println(" User deleted successfully!");
+            execute("ALTER TABLE users AUTO_INCREMENT = 1");
+        } else {
+            System.out.println(" Failed to delete user.");
+        }
+    }
+
+    private void deletePaymentMethod() {
+        Scanner s = new Scanner(System.in);
+        System.out.print("Enter card number to delete: ");
+        String cardNumber = s.next();
+
+        if (!cardNumber.matches("\\d{12,19}")) {
+            System.out.println(" Invalid card number! Must be 12-19 digits.");
+            return;
+        }
+
+        boolean success = execute("DELETE FROM payment_methods WHERE card_number = ?", cardNumber);
+        if (success) {
+            System.out.println(" Payment method deleted successfully!");
+        } else {
+            System.out.println(" Card number not found or deletion failed.");
+        }
+    }
+
+    private void deleteTransaction() {
+        Scanner s = new Scanner(System.in);
+        System.out.print("Enter transaction ID to delete: ");
+        
+        if (!s.hasNextInt()) {
+            System.out.println(" Invalid input! Transaction ID must be a number.");
+            s.next();
+            return;
+        }
+
+        int transactionId = s.nextInt();
+        boolean success = execute("DELETE FROM transactions WHERE id = ?", transactionId);
+
+        if (success) {
+            System.out.println(" Transaction deleted successfully!");
+        } else {
+            System.out.println(" Transaction ID not found.");
+        }
+    }
+}
+
+class PaymentSystem {
+    public static void main(String[] args) {
+        PaymentGateway pg = new PaymentGateway();
+        Scanner s = new Scanner(System.in);
+        while (true) {
+            System.out.print("\n1.Register 2.Add Payment 3.Pay 4.Delete Record 5.Exit: ");
+            
+            if (!s.hasNextInt()) { 
+                System.out.println(" Invalid input! Enter a number between 1-5.");
+                s.next(); 
+                continue;
+            }
+            
+            int choice = s.nextInt();
+            switch (choice) {
+                case 1 -> pg.registerUser();
+                case 2 -> pg.addPaymentMethod();
+                case 3 -> pg.processPayment();
+                case 4 -> pg.deleteRecord();
+                case 5 -> {
+                    System.out.println(" Exiting program. Goodbye!");
+                    return;
+                }
+                default -> System.out.println(" Invalid option! Please enter a number between 1-5.");
+            }
+        }
+    }
+}
